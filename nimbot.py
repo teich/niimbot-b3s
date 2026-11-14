@@ -275,7 +275,7 @@ def render_text(text, size_px, font_path=None, margin_mm=2.0, align="center", fo
     return img.point(lambda v: 0 if v < 128 else 255, "1")
 
 
-# --- sheet-set labels: tracked serif brand, short rule, "KING · SHEET SET" ---
+# --- sheet-set labels: brand, italic description, short rule, "KING · SHEET SET" ---
 
 SHEET_FONTS = {
     # Georgia was drawn for low-res screens: its serifs and joins are thick enough to survive a
@@ -284,7 +284,7 @@ SHEET_FONTS = {
         ("/System/Library/Fonts/Supplemental/Georgia Bold.ttf", 0),
         ("/System/Library/Fonts/Supplemental/Baskerville.ttc", 1),  # Bold
     ],
-    "material": [
+    "description": [
         ("/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf", 0),
         ("/System/Library/Fonts/Supplemental/Baskerville.ttc", 3),  # Bold Italic
     ],
@@ -304,15 +304,15 @@ def sheet_font(role, px):
 
 
 def parse_sheet(spec):
-    """'Brand, Size[, Type[, Material]]' -> (brand, size, kind, material).
+    """'Brand, Size[, Type[, Description]]' -> (brand, size, kind, description).
 
-    Type defaults to Sheet Set; material is optional and may be left empty ('Frette, King, , Linen').
+    Type defaults to Sheet Set (leave it empty to keep the default: 'Frette, King, , White Cotton').
     """
     parts = [p.strip() for p in spec.split(",")]
     if not 2 <= len(parts) <= 4 or not parts[0] or not parts[1]:
-        sys.exit(f"expected 'Brand, Size[, Type[, Material]]', got {spec!r}")
-    brand, size, kind, material = parts + [""] * (4 - len(parts))
-    return brand, size, kind or "Sheet Set", material or None
+        sys.exit(f"expected 'Brand, Size[, Type[, Description]]', got {spec!r}")
+    brand, size, kind, description = parts + [""] * (4 - len(parts))
+    return brand, size, kind or "Sheet Set", description or None
 
 
 def tracked_width(draw, text, font, track_px):
@@ -330,7 +330,18 @@ def cap_height(font):
     return bottom - top
 
 
-def fit_brand_px(brand, size_px, margin_mm=5.0, max_cap_mm=9.0):
+BRAND_REF = "BROOKLINEN"  # every label uses the brand size that fits this name
+BRAND_MAX_CAP_MM = 7.5
+DESC_CAP_MM = 4.4
+DETAIL_CAP_MM = 2.4
+# fixed baselines (mm from the label top) so every label lines up the same
+BRAND_BASE_MM = 15.0
+DESC_BASE_MM = 23.0
+RULE_MM = 27.0
+DETAIL_BASE_MM = 32.6
+
+
+def fit_brand_px(brand, size_px, margin_mm=5.0, max_cap_mm=BRAND_MAX_CAP_MM):
     """Largest brand font size that fits the width and keeps caps under max_cap_mm."""
     draw = ImageDraw.Draw(Image.new("L", (1, 1)))
     box_w = size_px[0] - 2 * round(margin_mm * PX_PER_MM)
@@ -346,45 +357,52 @@ def fit_brand_px(brand, size_px, margin_mm=5.0, max_cap_mm=9.0):
     return px
 
 
-def render_sheet(brand, size, kind, size_px, brand_px=None, material=None):
+def px_for_cap(role, cap_mm):
+    """Font size in px whose capital H is cap_mm tall."""
+    ref = 100
+    return round(ref * cap_mm * PX_PER_MM / cap_height(sheet_font(role, ref)))
+
+
+def shrink_to_width(text, role, px, max_w, track_em=0.0):
+    """Shrink px until text fits max_w; warn when it had to shrink."""
+    draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+    start = px
+    while px > 8 and tracked_width(draw, text, sheet_font(role, px), track_em * px) > max_w:
+        px -= 1
+    if px < start:
+        print(f"note: {text!r} set smaller ({px * 100 // start}%) to fit the label", file=sys.stderr)
+    return px
+
+
+def render_sheet(brand, size, kind, size_px, description=None):
+    """Brand in spaced caps, italic description, short rule, small 'KING · SHEET SET'.
+
+    Sizes and positions are fixed, so labels printed on different days still match.
+    """
     w, h = size_px
+    mm = PX_PER_MM
     brand = brand.upper()
     detail = f"{size.upper()}  ·  {kind.upper()}"
-    brand_px = brand_px or fit_brand_px(brand, size_px)
-    fb = sheet_font("brand", brand_px)
-    detail_px = round(3.0 * PX_PER_MM / 0.72)  # ~3mm caps
-    fd = sheet_font("detail", detail_px)
-    material_px = round(3.4 * PX_PER_MM / 0.7)  # ~3.4mm caps
-    fm = sheet_font("material", material_px)
+
+    brand_px = shrink_to_width(brand, "brand", fit_brand_px(BRAND_REF, size_px), w - 10 * mm, BRAND_TRACK)
+    desc_px = px_for_cap("description", DESC_CAP_MM)
+    if description:
+        desc_px = shrink_to_width(description, "description", desc_px, w - 8 * mm)
+    detail_px = px_for_cap("detail", DETAIL_CAP_MM)
+    fb, fm, fd = sheet_font("brand", brand_px), sheet_font("description", desc_px), sheet_font("detail", detail_px)
 
     img = Image.new("L", (w, h), 255)
     draw = ImageDraw.Draw(img)
     bw = tracked_width(draw, brand, fb, BRAND_TRACK * brand_px)
-    dw = tracked_width(draw, detail, fd, DETAIL_TRACK * detail_px)
-    margin = round(3 * PX_PER_MM)
-    if dw > w - 2 * margin:
-        print(f"warning: {detail!r} overflows the label width", file=sys.stderr)
-
-    # stack: brand caps / [material] / gap / rule / gap / detail caps, centered vertically
-    gap = round(3.2 * PX_PER_MM)
-    material_gap = round(2.4 * PX_PER_MM)
-    rule_h = max(2, round(0.3 * PX_PER_MM))
-    material_h = material_gap + cap_height(fm) if material else 0
-    block = cap_height(fb) + material_h + gap + rule_h + gap + cap_height(fd)
-    top = (h - block) / 2
-    brand_base = top + cap_height(fb)
-    rule_y = brand_base + material_h + gap
-    detail_base = rule_y + rule_h + gap + cap_height(fd)
-
-    draw_tracked(draw, (w - bw) / 2, brand_base, brand, fb, BRAND_TRACK * brand_px)
-    if material:
-        mw = draw.textlength(material, font=fm)
-        if mw > w - 2 * margin:
-            print(f"warning: {material!r} overflows the label width", file=sys.stderr)
-        draw.text(((w - mw) / 2, brand_base + material_h), material, font=fm, fill=0, anchor="ls")
-    rule_w = round(14 * PX_PER_MM)
+    draw_tracked(draw, (w - bw) / 2, BRAND_BASE_MM * mm, brand, fb, BRAND_TRACK * brand_px)
+    if description:
+        dw = draw.textlength(description, font=fm)
+        draw.text(((w - dw) / 2, DESC_BASE_MM * mm), description, font=fm, fill=0, anchor="ls")
+    rule_w, rule_h = round(12 * mm), max(2, round(0.25 * mm))
+    rule_y = round(RULE_MM * mm)
     draw.rectangle([(w - rule_w) / 2, rule_y, (w + rule_w) / 2, rule_y + rule_h - 1], fill=0)
-    draw_tracked(draw, (w - dw) / 2, detail_base, detail, fd, DETAIL_TRACK * detail_px)
+    tw = tracked_width(draw, detail, fd, DETAIL_TRACK * detail_px)
+    draw_tracked(draw, (w - tw) / 2, DETAIL_BASE_MM * mm, detail, fd, DETAIL_TRACK * detail_px)
     return img.point(lambda v: 0 if v < 128 else 255, "1")
 
 
@@ -459,9 +477,9 @@ def main():
     s.add_argument(
         "labels",
         nargs="+",
-        metavar="'BRAND, SIZE[, TYPE[, MATERIAL]]'",
-        help="one label per argument, e.g. 'Frette, King' or 'Parachute, King, Duvet Cover, Cotton & Linen'"
-        " (type defaults to Sheet Set; material is an optional italic line under the brand)",
+        metavar="'BRAND, SIZE[, TYPE[, DESCRIPTION]]'",
+        help="one label per argument, e.g. 'Parachute, King, , White Linen' or 'Frette, King, Duvet Cover, Grey'"
+        " (type defaults to Sheet Set; description is an italic line under the brand)",
     )
     common(s, default_size="70x40", default_density=4)  # 4 shortens the fade-in on solid tops
 
@@ -495,9 +513,7 @@ def main():
             ]
         elif args.cmd == "sheet":
             specs = [parse_sheet(s) for s in args.labels]
-            # one brand size for the whole batch, set by the longest name
-            brand_px = min(fit_brand_px(b.upper(), size) for b, *_ in specs)
-            imgs = [finalize(render_sheet(b, sz, k, size, brand_px, m), rotate) for b, sz, k, m in specs]
+            imgs = [finalize(render_sheet(b, sz, k, size, d), rotate) for b, sz, k, d in specs]
         else:
             imgs = [finalize(render_image(args.path, size, not args.no_dither, args.invert), rotate)]
         if args.preview:
@@ -524,7 +540,10 @@ def main():
         for n, img in enumerate(imgs, 1):
             label = f" ({n}/{len(imgs)})" if len(imgs) > 1 else ""
             print(f"printing {img.width}x{img.height}px x{args.copies}{label}...")
-            printer.print_image(img, args.copies, args.density, LABEL_TYPES[args.label_type])
+            # One job per copy: B3S 10.x has no PrintStatus, and ending a multi-copy job via
+            # PrintEnd stops it after the first label.
+            for _ in range(args.copies):
+                printer.print_image(img, 1, args.density, LABEL_TYPES[args.label_type])
         print("done")
     except PrinterError as e:
         try:

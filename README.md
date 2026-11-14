@@ -30,16 +30,18 @@ Without uv: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 
 ### Sheet-set labels
 
-`sheet` prints 70x40mm linen labels: the brand in spaced serif capitals, a short rule, then `KING · SHEET SET`.
-Each argument is one label, `Brand, Size[, Type[, Material]]`; the type defaults to Sheet Set, and an optional
-material prints as an italic line under the brand. All labels in one run share the
-brand text size, set by the longest name. It prints at density 4 by default, which shortens the faint fade-in at
-the tops of large letters.
+`sheet` prints 70x40mm linen labels: the brand in spaced serif capitals, an italic description (color, pattern,
+material), a short rule, then a small `KING · SHEET SET`. Each argument is one label,
+`Brand, Size[, Type[, Description]]`; the type defaults to Sheet Set, so leave it empty to skip it.
+
+Every label uses the same text sizes and positions, so labels printed on different days match. The brand size is
+the one that fits "BROOKLINEN"; a longer brand or description is set smaller to fit, with a note. It prints at
+density 4 by default, which shortens the faint fade-in at the tops of large letters.
 
 ```bash
-.venv/bin/python nimbot.py sheet "Frette, King" "Parachute, King" "Brooklinen, Queen" "Frette, King, Duvet Cover"
-.venv/bin/python nimbot.py sheet "Parachute, King, Duvet Cover, Cotton & Linen"
-.venv/bin/python nimbot.py sheet "Frette, King" --preview frette.png   # render only
+.venv/bin/python nimbot.py sheet "Parachute, King, , White Linen" "Frette, King, Duvet Cover, Grey"
+.venv/bin/python nimbot.py sheet "Parachute, King, Duvet Cover, Cotton & Linen" --copies 2
+.venv/bin/python nimbot.py sheet "Quince, King, , White Linen" --preview quince.png   # render only
 ```
 
 Options: `--size WxH` in mm, where W runs across the 72mm printhead and H along the feed (default `15x30`).
