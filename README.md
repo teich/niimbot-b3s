@@ -32,7 +32,9 @@ Without uv: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
 
 `sheet` prints 70x40mm linen labels: the brand in spaced serif capitals, an italic description (color, pattern,
 material), a short rule, then a small `KING · SHEET SET`. Each argument is one label,
-`Brand, Size[, Type[, Description]]`; the type defaults to Sheet Set, so leave it empty to skip it.
+`Brand, Size[, Type[, Description]]`; the type defaults to Sheet Set, so leave it empty to skip it. A name on its
+own (`"Pillow Shams"`) prints centered at the brand size, wrapping onto two lines if one line would come out much
+smaller.
 
 Every label uses the same text sizes and positions, so labels printed on different days match. The brand size is
 the one that fits "BROOKLINEN"; a longer brand or description is set smaller to fit, with a note. It prints at

@@ -304,14 +304,17 @@ def sheet_font(role, px):
 
 
 def parse_sheet(spec):
-    """'Brand, Size[, Type[, Description]]' -> (brand, size, kind, description).
+    """'Brand[, Size[, Type[, Description]]]' -> (brand, size, kind, description).
 
     Type defaults to Sheet Set (leave it empty to keep the default: 'Frette, King, , White Cotton').
+    A name on its own ('Dog Sheets') prints as just that name, centered.
     """
     parts = [p.strip() for p in spec.split(",")]
-    if not 2 <= len(parts) <= 4 or not parts[0] or not parts[1]:
-        sys.exit(f"expected 'Brand, Size[, Type[, Description]]', got {spec!r}")
+    if not 1 <= len(parts) <= 4 or not parts[0] or (len(parts) > 1 and not parts[1]):
+        sys.exit(f"expected 'Brand[, Size[, Type[, Description]]]', got {spec!r}")
     brand, size, kind, description = parts + [""] * (4 - len(parts))
+    if not size:
+        return brand, None, None, None
     return brand, size, kind or "Sheet Set", description or None
 
 
@@ -363,15 +366,43 @@ def px_for_cap(role, cap_mm):
     return round(ref * cap_mm * PX_PER_MM / cap_height(sheet_font(role, ref)))
 
 
-def shrink_to_width(text, role, px, max_w, track_em=0.0):
-    """Shrink px until text fits max_w; warn when it had to shrink."""
+def shrink_to_width(text, role, px, max_w, track_em=0.0, quiet=False):
+    """Shrink px until text fits max_w; note it when it had to shrink."""
     draw = ImageDraw.Draw(Image.new("L", (1, 1)))
     start = px
     while px > 8 and tracked_width(draw, text, sheet_font(role, px), track_em * px) > max_w:
         px -= 1
-    if px < start:
+    if px < start and not quiet:
         print(f"note: {text!r} set smaller ({px * 100 // start}%) to fit the label", file=sys.stderr)
     return px
+
+
+def render_name(name, size_px, full_px, max_w):
+    """Name-only label at the brand size, centered; long names wrap onto two balanced lines."""
+    w, h = size_px
+
+    def fit(lines):
+        return min(shrink_to_width(s, "brand", full_px, max_w, BRAND_TRACK, quiet=True) for s in lines)
+
+    words = name.split()
+    options = [[name]] + [[" ".join(words[:i]), " ".join(words[i:])] for i in range(1, len(words))]
+    one_line_px = fit([name])
+    # wrap only when one line would print noticeably smaller than the standard brand size
+    lines = [name] if one_line_px >= 0.8 * full_px else max(options, key=fit)
+    px = fit(lines)
+    if px < full_px:
+        print(f"note: {name!r} set smaller ({px * 100 // full_px}%) to fit the label", file=sys.stderr)
+
+    img = Image.new("L", (w, h), 255)
+    draw = ImageDraw.Draw(img)
+    font = sheet_font("brand", px)
+    cap, gap = cap_height(font), round(4 * PX_PER_MM)
+    base = (h - (len(lines) * cap + (len(lines) - 1) * gap)) / 2 + cap
+    for line in lines:
+        lw = tracked_width(draw, line, font, BRAND_TRACK * px)
+        draw_tracked(draw, (w - lw) / 2, base, line, font, BRAND_TRACK * px)
+        base += cap + gap
+    return img.point(lambda v: 0 if v < 128 else 255, "1")
 
 
 def render_sheet(brand, size, kind, size_px, description=None):
@@ -382,9 +413,12 @@ def render_sheet(brand, size, kind, size_px, description=None):
     w, h = size_px
     mm = PX_PER_MM
     brand = brand.upper()
+    full_px, max_w = fit_brand_px(BRAND_REF, size_px), w - 10 * mm
+    if not size:
+        return render_name(brand, size_px, full_px, max_w)
+    brand_px = shrink_to_width(brand, "brand", full_px, max_w, BRAND_TRACK)
     detail = f"{size.upper()}  ·  {kind.upper()}"
 
-    brand_px = shrink_to_width(brand, "brand", fit_brand_px(BRAND_REF, size_px), w - 10 * mm, BRAND_TRACK)
     desc_px = px_for_cap("description", DESC_CAP_MM)
     if description:
         desc_px = shrink_to_width(description, "description", desc_px, w - 8 * mm)
@@ -477,9 +511,9 @@ def main():
     s.add_argument(
         "labels",
         nargs="+",
-        metavar="'BRAND, SIZE[, TYPE[, DESCRIPTION]]'",
+        metavar="'BRAND[, SIZE[, TYPE[, DESCRIPTION]]]'",
         help="one label per argument, e.g. 'Parachute, King, , White Linen' or 'Frette, King, Duvet Cover, Grey'"
-        " (type defaults to Sheet Set; description is an italic line under the brand)",
+        " (type defaults to Sheet Set; description is an italic line under the brand; a name alone prints centered)",
     )
     common(s, default_size="70x40", default_density=4)  # 4 shortens the fade-in on solid tops
 
